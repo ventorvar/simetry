@@ -17,6 +17,7 @@ pub struct SimState {
     variables: Arc<VarHeaders>,
     raw_data: Vec<u8>,
     session_info: Arc<Yaml>,
+    tick: i32,
 }
 
 impl Moment for SimState {
@@ -145,12 +146,14 @@ impl SimState {
         variables: Arc<VarHeaders>,
         raw_data: Vec<u8>,
         session_info: Arc<Yaml>,
+        tick: i32,
     ) -> Self {
         Self {
             header,
             variables,
             raw_data,
             session_info,
+            tick,
         }
     }
 
@@ -180,6 +183,10 @@ impl SimState {
 
     pub fn session_info(&self) -> &Yaml {
         &self.session_info
+    }
+
+    pub fn tick(&self) -> i32 {
+        self.tick
     }
 }
 

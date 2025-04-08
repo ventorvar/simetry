@@ -10,7 +10,7 @@ pub mod assetto_corsa_competizione;
 pub mod dirt_rally_2;
 #[cfg(feature = "unstable_generic_http_client")]
 pub mod generic_http;
-#[cfg(windows)]
+
 pub mod iracing;
 #[cfg(unix)]
 mod linux_util;
@@ -23,6 +23,8 @@ pub mod rfactor_2;
 pub mod truck_simulator;
 #[cfg(windows)]
 mod windows_util;
+
+mod utils;
 
 /// Sim that we can connect to via the common [`connect`] function.
 #[async_trait::async_trait]

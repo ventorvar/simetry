@@ -5,7 +5,7 @@ use crate::rfactor_2::shared_memory_data::{
     PageVehScoringCapture, PageVehicleScoring, PageVehicleTelemetry, PageWeather,
     PageWheelTelemetry, MAX_MAPPED_IDS, MAX_MAPPED_VEHICLES,
 };
-use crate::windows_util::cp1252_to_string;
+use crate::utils::cp1252_to_string;
 use anyhow::{bail, Error, Result};
 
 #[derive(Copy, Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]

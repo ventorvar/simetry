@@ -18,6 +18,7 @@ fn main() {
         .write_to_file(out_path.join("r3e.rs"))
         .expect("Couldn't write bindings!");
 
+    #[cfg(windows)]
     let bindings = bindgen::Builder::default()
         .header("src/truck_simulator/scs-sdk-plugin/scssdk.h")
         .header("src/truck_simulator/scs-sdk-plugin/scs-telemetry-common.hpp")

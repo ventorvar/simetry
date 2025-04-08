@@ -73,15 +73,41 @@ impl DiskClient {
         &self.session_info
     }
 
-    pub fn next_sim_state(&mut self) -> Option<SimState> {
+    fn read_sim_state_at(&mut self, offset: i64) -> Option<SimState> {
         let mut raw_data = vec![0u8; self.header.buf_len as usize];
+        if let Ok(pos) = self.file.seek(SeekFrom::Start(offset as u64)) {
+            if offset as u64 > pos {
+                return None;
+            }
+        } else {
+            return None;
+        }
         self.file.read_exact(&mut raw_data).ok()?;
         Some(SimState::new(
             self.header.clone(),
             Arc::clone(&self.variables),
             raw_data,
             Arc::clone(&self.session_info),
+            ((offset - self.header.var_buf[0].buf_offset as i64) / self.header.buf_len as i64) as i32,
         ))
+    }
+
+    pub fn read_sim_state(&mut self, tick: i64) -> Option<SimState> {
+        let offset = self.header.var_buf[0].buf_offset as i64 + tick * self.header.buf_len as i64;
+        return self.read_sim_state_at(offset);
+    }
+
+    pub fn latest_sim_state(&mut self) -> Option<SimState> {
+        let file_size = self.file.seek(SeekFrom::End(0)).ok()? as i64;
+        let total_data_size = file_size - self.header.var_buf[0].buf_offset as i64;
+        let num_complete_buffers = total_data_size / self.header.buf_len as i64 - 1;
+        let last_buffer_start = num_complete_buffers * self.header.buf_len as i64 + self.header.var_buf[0].buf_offset as i64;
+        self.read_sim_state_at(last_buffer_start)
+    }
+
+    pub fn next_sim_state(&mut self) -> Option<SimState> {
+        let offset = self.file.seek(SeekFrom::Current(0)).ok()? as i64;
+        return self.read_sim_state_at(offset);
     }
 }
 
