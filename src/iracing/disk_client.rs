@@ -1,13 +1,12 @@
 use crate::iracing::constants::IRSDK_VER;
 use crate::iracing::header::VarHeaderRaw;
-use crate::iracing::session_info::parse_session_info;
+use crate::iracing::session_info::{parse_session_info, SessionInfo};
 use crate::iracing::{DiskSubHeader, Header, SimState, VarHeader, VarHeaders};
 use anyhow::{bail, Result};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
-use yaml_rust::Yaml;
 
 #[derive(Debug)]
 pub struct DiskClient {
@@ -15,7 +14,7 @@ pub struct DiskClient {
     header: Arc<Header>,
     sub_header: DiskSubHeader,
     variables: Arc<VarHeaders>,
-    session_info: Arc<Yaml>,
+    session_info: Arc<SessionInfo>,
 }
 
 impl DiskClient {
@@ -69,7 +68,7 @@ impl DiskClient {
         &self.variables
     }
 
-    pub fn session_info(&self) -> &Yaml {
+    pub fn session_info(&self) -> &SessionInfo {
         &self.session_info
     }
 

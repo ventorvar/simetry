@@ -1,6 +1,6 @@
 use crate::iracing::constants::IRSDK_VER;
 use crate::iracing::header::{VarBuf, VarHeaderRaw};
-use crate::iracing::session_info::parse_session_info;
+use crate::iracing::session_info::{parse_session_info, SessionInfo};
 use crate::iracing::{Header, SimState, VarHeader, VarHeaders};
 use crate::{windows_util, Moment, Simetry};
 use anyhow::{bail, Result};
@@ -13,7 +13,7 @@ use windows::core::PCSTR;
 use windows::Win32::System::Threading::{
     OpenEventA, WaitForSingleObject, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
 };
-use yaml_rust::Yaml;
+use windows::Win32::System::WindowsProgramming::INFINITE;
 
 static DATAVALIDEVENTNAME: &[u8] = b"Local\\IRSDKDataValidEvent\0";
 static MEMMAPFILENAME: &[u8] = b"Local\\IRSDKMemMapFileName\0";
@@ -169,11 +169,11 @@ impl Simetry for Client {
 
 #[derive(Default)]
 struct SessionInfoCache {
-    content: Option<(i32, Arc<Yaml>)>,
+    content: Option<(i32, Arc<SessionInfo>)>,
 }
 
 impl SessionInfoCache {
-    fn get(&mut self, shared_memory: &SharedMemory) -> Result<Arc<Yaml>> {
+    fn get(&mut self, shared_memory: &SharedMemory) -> Result<Arc<SessionInfo>> {
         let new_id = shared_memory.header().session_info_update;
         if let Some((old_id, data)) = &self.content {
             if new_id == *old_id {
