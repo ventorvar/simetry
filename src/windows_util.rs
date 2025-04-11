@@ -1,5 +1,4 @@
 use std::ffi::c_void;
-use std::string::FromUtf16Error;
 use std::time::Duration;
 use windows::core::PCSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};

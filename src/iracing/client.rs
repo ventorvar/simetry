@@ -13,7 +13,6 @@ use windows::core::PCSTR;
 use windows::Win32::System::Threading::{
     OpenEventA, WaitForSingleObject, INFINITE, SYNCHRONIZATION_SYNCHRONIZE,
 };
-use windows::Win32::System::WindowsProgramming::INFINITE;
 
 static DATAVALIDEVENTNAME: &[u8] = b"Local\\IRSDKDataValidEvent\0";
 static MEMMAPFILENAME: &[u8] = b"Local\\IRSDKMemMapFileName\0";
@@ -21,6 +20,20 @@ static MEMMAPFILENAME: &[u8] = b"Local\\IRSDKMemMapFileName\0";
 const STATUS_CONNECTED_FLAG: i32 = 1;
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(debug_assertions)]
+macro_rules! debug_print {
+    ($($arg:tt)*) => {
+        if std::env::var("IRACING_DEBUG").is_ok() {
+            println!($($arg)*);
+        }
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! debug_print {
+    ($($arg:tt)*) => {};
+}
 
 pub struct Client {
     vars_at_buf_len: i32,
@@ -61,11 +74,22 @@ impl Client {
             bail!("iRacing SDK version mismatch: expected {IRSDK_VER}, received {sdk_version}");
         }
 
+        // Initialize last_tick_count to the current tick count minus 1
+        let header = shared_memory.header();
+        let mut last_tick_count = -1;
+        for idx in 0..(header.num_buf as usize) {
+            let tick = header.var_buf[idx].tick_count;
+            if tick > last_tick_count {
+                last_tick_count = tick;
+            }
+        }
+        last_tick_count = last_tick_count.wrapping_sub(1); // Start from the previous tick
+
         Ok(Client {
             vars_at_buf_len: -1,
             vars: Arc::new(HashMap::new()),
             session_info_cache: SessionInfoCache::default(),
-            last_tick_count: i32::MAX,
+            last_tick_count,
             last_valid_time: None,
             shared_memory,
             data_valid_event,
@@ -73,72 +97,94 @@ impl Client {
     }
 
     pub async fn next_sim_state(&mut self) -> Option<SimState> {
-        loop {
-            if !self.is_connected() {
-                return None;
-            }
-
-            if let Some(sim_state) = self.get_new_sim_state() {
-                return Some(sim_state);
-            }
-
-            self.data_valid_event
-                .wait(Some(Duration::from_millis(250)))
-                .await;
+        let start = std::time::Instant::now();
+        
+        if !self.is_connected() {
+            debug_print!("Client not connected");
+            return None;
         }
+
+        // Try to get new data immediately
+        if let Some(sim_state) = self.get_new_sim_state() {
+            let get_time = start.elapsed();
+            debug_print!("Client timing: get_new_sim_state={:?}, total={:?}", get_time, get_time);
+            return Some(sim_state);
+        }
+
+        debug_print!("No immediate data, waiting for data valid event...");
+        // If no new data, wait briefly for the data valid event
+        self.data_valid_event
+            .wait(Some(Duration::from_micros(100)))
+            .await;
+
+        // Try one more time after the wait
+        if let Some(sim_state) = self.get_new_sim_state() {
+            let get_time = start.elapsed();
+            debug_print!("Client timing: get_new_sim_state={:?}, total={:?}", get_time, get_time);
+            return Some(sim_state);
+        }
+
+        debug_print!("No data available after wait");
+        None
     }
 
     fn get_new_sim_state(&mut self) -> Option<SimState> {
         let header = self.shared_memory.header();
 
         if self.vars_at_buf_len != header.buf_len {
+            debug_print!("Updating var headers, old len={}, new len={}", self.vars_at_buf_len, header.buf_len);
             self.vars = Arc::new(self.shared_memory.get_var_headers());
         }
 
         if header.status & STATUS_CONNECTED_FLAG == 0 {
+            debug_print!("Header not connected, status={}", header.status);
             self.last_tick_count = i32::MAX;
             return None;
         }
 
-        let mut latest_buffer_idx = 0;
-        for idx in 1..(header.num_buf as usize) {
-            if header.var_buf[latest_buffer_idx].tick_count < header.var_buf[idx].tick_count {
-                latest_buffer_idx = idx;
+        // Find all buffers with new data
+        let mut new_buffers = Vec::new();
+        for idx in 0..(header.num_buf as usize) {
+            let tick = header.var_buf[idx].tick_count;
+            if tick > self.last_tick_count {
+                new_buffers.push((idx, tick));
             }
         }
 
-        let buffer = &header.var_buf[latest_buffer_idx];
+        // Sort by tick count to process in order
+        new_buffers.sort_by_key(|&(_, tick)| tick);
 
-        if self.last_tick_count >= buffer.tick_count {
-            self.last_tick_count = buffer.tick_count;
-            return None;
-        }
+        // Process the latest buffer
+        if let Some(&(latest_idx, latest_tick)) = new_buffers.last() {
+            let buffer = &header.var_buf[latest_idx];
+            debug_print!("Found new data: current={}, last={}, diff={}, new_buffers={}", 
+                buffer.tick_count, self.last_tick_count, 
+                buffer.tick_count.wrapping_sub(self.last_tick_count),
+                new_buffers.len());
 
-        // Two attempts to retrieve data
-        for _ in 0..2 {
-            let tick_count = buffer.tick_count;
+            // Read the data
             let data = self.shared_memory.data(header, buffer);
-            if tick_count == buffer.tick_count {
-                self.last_tick_count = tick_count;
-                self.last_valid_time = Some(SystemTime::now());
-                return if self.is_connected() {
-                    let session_info = self.session_info_cache.get(&self.shared_memory).ok()?;
-                    Some(SimState::new(
-                        Arc::new(header.clone()),
-                        Arc::clone(&self.vars),
-                        data.to_vec(),
-                        session_info,
-                    ))
-                } else {
-                    None
-                };
+            self.last_tick_count = latest_tick;
+            self.last_valid_time = Some(SystemTime::now());
+
+            if self.is_connected() {
+                let session_info = self.session_info_cache.get(&self.shared_memory).ok()?;
+                return Some(SimState::new(
+                    Arc::new(header.clone()),
+                    Arc::clone(&self.vars),
+                    data.to_vec(),
+                    session_info,
+                    latest_tick,
+                ));
             }
+        } else {
+            debug_print!("No new buffers found, last_tick={}", self.last_tick_count);
         }
 
         None
     }
 
-    fn is_connected(&self) -> bool {
+    pub fn is_connected(&self) -> bool {
         if !self.shared_memory.is_header_connected() {
             return false;
         }
@@ -190,7 +236,7 @@ struct SharedMemory(windows_util::SharedMemory);
 
 impl SharedMemory {
     async fn connect() -> Self {
-        Self(windows_util::SharedMemory::connect(MEMMAPFILENAME, Duration::from_millis(250)).await)
+        Self(windows_util::SharedMemory::connect(MEMMAPFILENAME, Duration::from_millis(1)).await)
     }
 
     fn header(&self) -> &Header {
@@ -248,7 +294,7 @@ struct DataValidEvent {
 
 impl DataValidEvent {
     async fn connect() -> Self {
-        let poll_delay = Duration::from_millis(250);
+        let poll_delay = Duration::from_micros(100);
         loop {
             {
                 let handle_opt = unsafe {
